@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useRef } from 'react';
 import axios from 'axios';
 import Avatar from './Avatar';
 import Report from './Report';
@@ -29,12 +30,13 @@ function App() {
   const [isListening, setIsListening] = useState(false);
   const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
-  
+  const recognitionRef = useRef(null);
+
   const speak = (text, onEndCallback = null) => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.95; 
+      utterance.rate = 0.75; 
       utterance.lang = 'en-US';
       utterance.onstart = () => setIsAvatarSpeaking(true);
       utterance.onend = () => { setIsAvatarSpeaking(false); if (onEndCallback) onEndCallback(); };
@@ -114,17 +116,17 @@ function App() {
   };
 
   // --- ROBUST HANDLE NEXT (Fixes Lag & Repetition) ---
-  const handleNext = async (autoSubmit = false) => {
+const handleNext = async (autoSubmit = false) => {
     if (isProcessing) return; 
     setIsProcessing(true);
     setTimeLeft(null); 
-    
+
     let currentQId = null;
     if (stage === "WAT") currentQId = questions.watId;
     else if (stage === "SRT") currentQId = questions.srtId;
     else if (stage === "PI") currentQId = questions.piId;
 
-    // 1. WAIT FOR SAVE TO COMPLETE
+    // 1. SAVE ANSWER
     if (userAnswer || autoSubmit) {
       try {
         await axios.post('http://127.0.0.1:8000/api/submit/', {
@@ -134,70 +136,121 @@ function App() {
       } catch (error) { console.error("Save failed:", error); }
     }
 
-    // 2. DETERMINE NEXT STEP (AFTER SAVE)
+    // --- SAFETY DELAY (500ms) ---
+    // Database update hone ka time do
+    await new Promise(r => setTimeout(r, 500)); 
+
+    // 2. NEXT STEP LOGIC
     let nextStage = stage;
     let nextQCount = qCount;
-    let shouldLoadNew = false;
-    let transitionMsg = "";
+    let transitionNeeded = false;
+    let loadNew = false;
 
     if (stage === "WAT") {
-        if (qCount < 3) { nextQCount++; shouldLoadNew = true; }
-        else { nextStage = "SRT"; nextQCount = 1; shouldLoadNew = true; transitionMsg = "Next: SRT"; }
+        if (qCount < 3) { nextQCount++; loadNew = true; }
+        else { nextStage = "SRT"; nextQCount = 1; loadNew = true; transitionNeeded = true; }
     }
     else if (stage === "SRT") {
-        if (qCount < 3) { nextQCount++; shouldLoadNew = true; }
-        else { nextStage = "SDT"; transitionMsg = "Next: SDT"; }
+        if (qCount < 3) { nextQCount++; loadNew = true; }
+        else { nextStage = "SDT"; transitionNeeded = true; }
     }
     else if (stage === "PI") {
         if (qCount < 4) { 
-            nextQCount++; 
-            shouldLoadNew = true; 
-            // Agar Q1 (Intro) tha, toh ab normal questions load karo. Note: logic here is tricky, ensure loadNewSet is called with correct params if needed.
-            // For PI specifically, we rely on loadNewSet logic or explicit call.
-            if (qCount === 1) loadNewSet(userBg, sessionId, null); 
+            nextQCount++; loadNew = true; 
+            // Agar Q1 (Intro) abhi khatam hua hai, toh Q2 load karo
+            if (qCount === 1) {
+                 // Explicitly call with null category to trigger logic
+                 await loadNewSet(userBg, sessionId, null);
+                 loadNew = false; // Upar load kar liya
+            }
         }
-        else { // --- FINAL FIX: REPORT SE PEHLE WAIT KARO ---
-            setIsGeneratingReport(true); // Show Loading Screen
+        else { setIsGeneratingReport(true); // Loading On
             
-            // 4 Second ka wait taaki Backend AI apna kaam khatam kar le
             setTimeout(() => {
                 setStage("REPORT");
-                setIsGeneratingReport(false);
-                setIsProcessing(false); // Unlock only after wait
-            }, 7000);
+                setIsGeneratingReport(false); // Loading Off
+                setIsProcessing(false);       // Unlock
+            }, 5000); // 5 Seconds Delay
             
-            return; // Yahi ruk jao, niche wala logic mat chalao
-             }
+            return; }
     }
 
-    // 3. EXECUTE CHANGES
-    if (transitionMsg) {
-        if(nextStage === "SDT") transitionToStage("SDT", "Next is Self Description Test. Describe what others think about you.", "Next: Self Description Test");
-        else if(nextStage === "SRT") transitionToStage("SRT", "Next is Situation Reaction Test. How would you react in this Situation.", "Next: Situation Reaction Test");
+    // 3. EXECUTE
+    if (transitionNeeded) {
+        if(nextStage === "SDT") transitionToStage("SDT", "Next is Self Description Test.", "Next: SDT");
+        else if(nextStage === "SRT") transitionToStage("SRT", "Next is Situation Reaction Test.", "Next: SRT");
         else setStage(nextStage);
         
-        if (nextStage !== "SDT" && shouldLoadNew) loadNewSet();
+        if (loadNew) loadNewSet();
         setQCount(nextQCount);
     } else {
-        // Same stage, just next question
-        if (shouldLoadNew && stage !== "REPORT") await loadNewSet(); // Wait for new question
+        if(loadNew) await loadNewSet();
         setQCount(nextQCount);
-        setStage(nextStage); // Force re-render
+        setStage(nextStage);
     }
-
+    
     setUserAnswer(""); 
-    setIsProcessing(false); // Unlock UI
+    setIsProcessing(false);
   };
 
-  const startListening = () => {
+  // --- FIXED MIC LOGIC (Toggle & Continuous) ---
+  const toggleListening = () => {
+    // Case 1: Agar Mic ON hai -> toh BAND karo
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop(); // Asli stop
+      }
+      setIsListening(false);
+      return;
+    }
+
+    // Case 2: Agar Mic OFF hai -> toh CHALU karo
     if ('webkitSpeechRecognition' in window) {
       const recognition = new window.webkitSpeechRecognition();
+      recognitionRef.current = recognition; // Ref mein store kiya
+
       recognition.lang = 'en-US';
+      recognition.continuous = true;     // <--- CRITICAL FIX (Lamba sunega)
+      recognition.interimResults = true; // <--- Real-time typing dikhegi
+
       recognition.onstart = () => setIsListening(true);
-      recognition.onend = () => setIsListening(false);
-      recognition.onresult = (e) => setUserAnswer(e.results[0][0].transcript);
+      
+      recognition.onend = () => {
+          // Auto-stop na ho, isliye hum state check karenge
+          // Agar humne jaan-bujh ke band nahi kiya, toh ye restart ho sakta hai
+          // Par abhi ke liye simple rakhte hain
+          setIsListening(false);
+      };
+
+      recognition.onerror = (event) => {
+          console.error("Mic Error:", event.error);
+          setIsListening(false);
+      };
+
+      recognition.onresult = (event) => {
+        // Jo bhi bola ja raha hai use jodte jao
+        let finalTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript + " ";
+          } else {
+            // Interim (abhi bol rahe ho)
+            finalTranscript += event.results[i][0].transcript;
+          }
+        }
+        // Agar user ne pehle kuch bola tha, toh naya text usme replace kare ya append?
+        // Behtar hai ki continuous flow mein hum seedha set karein
+        // Note: Yeh simple implementation hai, jo real-time update dega
+        const currentText = Array.from(event.results)
+            .map(result => result[0].transcript)
+            .join('');
+        setUserAnswer(currentText);
+      };
+
       recognition.start();
-    } else { alert("Use Chrome"); }
+    } else {
+      alert("Browser not supported. Please use Google Chrome.");
+    }
   };
 
     // --- UI ANIMATIONS (Injecting CSS) ---
@@ -243,9 +296,23 @@ function App() {
     <div style={{ display: 'flex', height: '100vh', width: '100vw', overflow: 'hidden', fontFamily: 'Arial, sans-serif' }}>
       
       {/* PROCESSING OVERLAY */}
-      {isProcessing && (
+      {/* {isProcessing && (
         <div style={{position:'absolute', top:0, left:0, width:'100%', height:'100%', background:'rgba(255,255,255,0.7)', zIndex:100, display:'flex', justifyContent:'center', alignItems:'center'}}>
             <h2>⏳ Processing...</h2>
+        </div>
+      )} */}
+
+      {/* REPORT GENERATION SCREEN (Overlay) */}
+      {isGeneratingReport && (
+        <div style={{
+            position:'absolute', top:0, left:0, width:'100%', height:'100%', 
+            background:'rgba(44, 62, 80, 0.95)', zIndex:200, 
+            display:'flex', flexDirection: 'column', justifyContent:'center', alignItems:'center',
+            color: 'white', backdropFilter: 'blur(5px)'
+        }}>
+            <div className="spinner"></div>
+            <h2 style={{marginTop: '20px'}}>📊 Analysing Personality Traits...</h2>
+            <p style={{color: '#bdc3c7'}}>Calculating OLQs, Voice Tone & Scores</p>
         </div>
       )}
 
@@ -370,10 +437,10 @@ function App() {
             </div>
 
             <div style={{ display: 'flex', gap: '20px', marginTop: '30px' }}>
-              <button onClick={startListening} style={{ ...styles.actionButton, backgroundColor: isListening ? '#e74c3c' : '#3498db', boxShadow: '0 10px 20px rgba(52, 152, 219, 0.3)' }}>
+              <button onClick={toggleListening} style={{ ...styles.actionButton, backgroundColor: isListening ? '#e74c3c' : '#3498db', boxShadow: '0 10px 20px rgba(52, 152, 219, 0.3)' }}>
                 {isListening ? "🛑 Stop" : "🎤 Start Speaking"}
               </button>
-              <button onClick={() => handleNext(false)} disabled={isProcessing} style={{ ...styles.actionButton, backgroundColor: isProcessing ? '#95a5a6' : '#27ae60', boxShadow: '0 10px 20px rgba(39, 174, 96, 0.3)' }}>
+              <button onClick={() => handleNext(false)} disabled={isProcessing} style={{ ...styles.actionButton, backgroundColor: isProcessing ? '#95a5a6' : '#27ae60', boxShadow: '0 10px 20px rgba(39, 174, 96, 0.3)',cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                 {isProcessing ? "Saving..." : "Submit ➡️"}
               </button>
             </div>
