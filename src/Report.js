@@ -171,6 +171,44 @@ export default function Report({ onRestart, sessionId }) {
         </div>
       </div>
 
+    <h3 style={{marginTop: '30px', color: '#34495e'}}>📝 Test-wise Performance Analysis</h3>
+      
+      <div style={{overflowX: 'auto'}}>
+        <table style={styles.table}>
+          <thead>
+            <tr style={{backgroundColor: '#ecf0f1'}}>
+              <th style={{...styles.th, width: '10%'}}>Test</th>
+              <th style={{...styles.th, width: '25%'}}>Your Answer</th>
+              <th style={{...styles.th, width: '55%'}}>AI Analysis & Feedback</th>
+              <th style={{...styles.th, width: '10%', textAlign: 'center'}}>Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.details.map((item, index) => (
+              <tr key={index} style={{borderBottom: '1px solid #eee'}}>
+                <td style={{...styles.td, fontWeight: 'bold', color: '#2c3e50'}}>{item.type}</td>
+                
+                <td style={{...styles.td, fontStyle: 'italic', color: '#555', fontSize: '14px'}}>
+                    "{item.answer}"
+                </td>
+                
+                <td style={styles.td}>
+                    <div style={{marginBottom: '8px', fontWeight: '500', color: '#333'}}>{item.feedback}</div>
+                    <div style={{backgroundColor: '#e8f4fc', padding: '8px', borderRadius: '5px', fontSize: '13px', color: '#2980b9', borderLeft: '3px solid #3498db'}}>
+                        {/* FIX: Passing item.answer here */}
+                        {"💡 " + getDynamicTip(item.feedback, item.score, item.type, item.answer)}
+                    </div>
+                </td>
+                
+                <td style={{...styles.td, textAlign: 'center', fontWeight: 'bold', fontSize: '18px', color: item.score > 6 ? '#27ae60' : (item.score > 4 ? '#f39c12' : '#e74c3c')}}>
+                    {item.score}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
       {data.olq_analysis && (
         <div style={{marginTop: '30px', padding: '20px', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '10px'}}>
             <h3 style={{color: '#2c3e50', borderBottom: '2px solid #eee', paddingBottom: '10px'}}>🧠 15 OLQ Assessment</h3>
@@ -223,44 +261,6 @@ export default function Report({ onRestart, sessionId }) {
             </div>
          </div>
       )}
-
-      <h3 style={{marginTop: '30px', color: '#34495e'}}>📝 Test-wise Performance Analysis</h3>
-      
-      <div style={{overflowX: 'auto'}}>
-        <table style={styles.table}>
-          <thead>
-            <tr style={{backgroundColor: '#ecf0f1'}}>
-              <th style={{...styles.th, width: '10%'}}>Test</th>
-              <th style={{...styles.th, width: '25%'}}>Your Answer</th>
-              <th style={{...styles.th, width: '55%'}}>AI Analysis & Feedback</th>
-              <th style={{...styles.th, width: '10%', textAlign: 'center'}}>Score</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.details.map((item, index) => (
-              <tr key={index} style={{borderBottom: '1px solid #eee'}}>
-                <td style={{...styles.td, fontWeight: 'bold', color: '#2c3e50'}}>{item.type}</td>
-                
-                <td style={{...styles.td, fontStyle: 'italic', color: '#555', fontSize: '14px'}}>
-                    "{item.answer}"
-                </td>
-                
-                <td style={styles.td}>
-                    <div style={{marginBottom: '8px', fontWeight: '500', color: '#333'}}>{item.feedback}</div>
-                    <div style={{backgroundColor: '#e8f4fc', padding: '8px', borderRadius: '5px', fontSize: '13px', color: '#2980b9', borderLeft: '3px solid #3498db'}}>
-                        {/* FIX: Passing item.answer here */}
-                        {"💡 " + getDynamicTip(item.feedback, item.score, item.type, item.answer)}
-                    </div>
-                </td>
-                
-                <td style={{...styles.td, textAlign: 'center', fontWeight: 'bold', fontSize: '18px', color: item.score > 6 ? '#27ae60' : (item.score > 4 ? '#f39c12' : '#e74c3c')}}>
-                    {item.score}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
 
       <div style={{display: 'flex', gap: '20px', marginTop: '40px'}}>
           <button onClick={downloadPDF} style={{...styles.btn, backgroundColor: '#3498db'}}>
